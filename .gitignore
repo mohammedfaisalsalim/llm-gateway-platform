@@ -1,0 +1,16 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+
+# Databases & Runtime Metrics Logs
+gateway_metrics.db
+
+# Operating System Files
+Thumbs.db
+desktop.ini

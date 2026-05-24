@@ -1,0 +1,19 @@
+models:
+  llama3.2:
+    provider: "ollama"
+    model_id: "llama3.2:3b"
+    quality_tier: 1
+    cost_per_input_token: 0.0
+    cost_per_output_token: 0.0
+  gemini-flash:
+    provider: "gemini"
+    model_id: "gemini-2.0-flash"
+    quality_tier: 2
+    cost_per_input_token: 0.000000075
+    cost_per_output_token: 0.00000025
+  mistral:
+    provider: "ollama"
+    model_id: "mistral:7b"
+    quality_tier: 3
+    cost_per_input_token: 0.0
+    cost_per_output_token: 0.0
