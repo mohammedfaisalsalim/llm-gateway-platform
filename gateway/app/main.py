@@ -1,5 +1,10 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+# Automatically load a local .env file on startup
+load_dotenv()
+
 from app.routes import chat
 from app.database import init_db
 
@@ -8,7 +13,6 @@ async def lifespan(app: FastAPI):
     # Runs on application startup
     init_db()
     yield
-    # Runs on application shutdown (clean up if needed)
 
 app = FastAPI(
     title="LLM Gateway", 
