@@ -1,7 +1,8 @@
 import yaml
+import time
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
-from app.models import ChatCompletionRequest
+from app.models import ChatCompletionRequest, ChatMessage
 from app.providers import send_request
 from app.classifier import classifier
 from app.database import log_request_to_db
@@ -51,8 +52,11 @@ async def create_chat_completion(request: ChatCompletionRequest):
             output=res.output_text
         )
         
+        # Generate a unique dynamic transaction ID mapping directly to the current epoch timestamp
+        unique_id = f"gw-cmpl-{int(time.time() * 1000)}"
+        
         return {
-            "id": "gw-cmpl",
+            "id": unique_id,
             "object": "chat.completion",
             "model": res.model_used,
             "choices": [{
