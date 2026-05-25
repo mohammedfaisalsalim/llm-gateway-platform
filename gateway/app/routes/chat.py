@@ -1,22 +1,37 @@
 import yaml
 import time
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
-from app.models import ChatCompletionRequest, ChatMessage
+from fastapi import APIRouter, HTTPException, Header, Response
+from app.models import ChatCompletionRequest
 from app.providers import send_request
 from app.classifier import classifier
 from app.database import log_request_to_db
+from app.rate_limiter import limiter  # Import our new rate limiting engine singleton
 
 router = APIRouter()
 
-# Resolve absolute workspace directory dynamically to prevent container/root paths from breaking
 CONFIG_PATH = Path(__file__).parent.parent / "models_config.yaml"
 
 with open(CONFIG_PATH, "r") as f: 
     config_data = yaml.safe_load(f)["models"]
 
 @router.post("/chat/completions")
-async def create_chat_completion(request: ChatCompletionRequest):
+async def create_chat_completion(
+    request: ChatCompletionRequest, 
+    response: Response,
+    x_team_id: str = Header(default="default-team")  # Capture calling identity via HTTP headers
+):
+    # --- DAY 8 PROTECTION RADAR CHECK ---
+    is_limited, retry_after = await limiter.is_rate_limited(x_team_id)
+    if is_limited:
+        # Inject standard compliance header alerting upstream caller frameworks when to back off
+        response.headers["Retry-After"] = str(retry_after)
+        raise HTTPException(
+            status_code=429, 
+            detail={"error": "Too Many Requests", "retry_after_seconds": retry_after}
+        )
+    # ------------------------------------
+
     try:
         user_prompt = request.messages[-1].content if request.messages else ""
         
@@ -52,11 +67,8 @@ async def create_chat_completion(request: ChatCompletionRequest):
             output=res.output_text
         )
         
-        # Generate a unique dynamic transaction ID mapping directly to the current epoch timestamp
-        unique_id = f"gw-cmpl-{int(time.time() * 1000)}"
-        
         return {
-            "id": unique_id,
+            "id": f"gw-cmpl-{int(time.time() * 1000)}",
             "object": "chat.completion",
             "model": res.model_used,
             "choices": [{

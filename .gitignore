@@ -14,3 +14,8 @@ gateway_metrics.db
 # Operating System Files
 Thumbs.db
 desktop.ini
+
+.venv/
+.env
+__pycache__/
+test.json
