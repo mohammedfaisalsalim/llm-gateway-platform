@@ -1,5 +1,6 @@
 import time
 import logging
+import uuid
 import redis.asyncio as aioredis
 from app.config import settings
 
@@ -23,10 +24,14 @@ class SlidingWindowLimiter:
             window_start = now - 60  # Look back exactly 1 rolling minute
             redis_key = f"sliding_limit:{client_id}"
 
+            # Create a completely unique member identifier using a UUID suffix
+            # This prevents microsecond collisions under heavy parallel load tests
+            member = f"{now}:{uuid.uuid4()}"
+
             # Atomic execution via Redis Pipeline
             async with self.redis.pipeline(transaction=True) as pipe:
                 pipe.zremrangebyscore(redis_key, 0, window_start)  # Drop expired hits
-                pipe.zadd(redis_key, {str(now): now})              # Log current hit
+                pipe.zadd(redis_key, {member: now})                # Log current unique hit
                 pipe.zcard(redis_key)                              # Count hits in window
                 pipe.expire(redis_key, 60)                         # Keep key memory clean
                 _, _, count, _ = await pipe.execute()

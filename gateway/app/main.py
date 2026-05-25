@@ -7,6 +7,7 @@ load_dotenv()
 
 from app.routes import chat
 from app.database import init_db
+from app.rate_limiter import limiter
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
