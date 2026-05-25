@@ -13,6 +13,8 @@ async def lifespan(app: FastAPI):
     # Runs on application startup
     init_db()
     yield
+    # Runs on application shutdown (Prevents production connection leaks)
+    await limiter.redis.aclose()
 
 app = FastAPI(
     title="LLM Gateway", 
