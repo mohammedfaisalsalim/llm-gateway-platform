@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+import asyncio
 
 # Automatically load a local .env file on startup
 load_dotenv()
@@ -8,19 +9,21 @@ load_dotenv()
 from app.routes import chat
 from app.database import init_db, bootstrap_budget_cache
 from app.rate_limiter import limiter
+from app.health import health_check_loop  # ← Add this import
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- STARTUP SEQUENCING ---
-    # 1. Initialize SQLite transactional log schema if it doesn't exist
     init_db()
-    
-    # 2. Synchronize and seed the Redis fast-cache from today's historical logs
     await bootstrap_budget_cache(limiter.redis)
+    
+    # Fire up the background circuit health checker task
+    app.state.background_health_task = asyncio.create_task(health_check_loop())
     yield
     
     # --- SHUTDOWN SEQUENCING ---
-    # 3. Cleanly close the Redis connection pool to prevent socket leaks
+    # Cancel background workers to prevent hanging processes
+    app.state.background_health_task.cancel()
     await limiter.redis.aclose()
 
 app = FastAPI(
@@ -29,7 +32,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Register API routes
 app.include_router(chat.router, prefix="/v1")
 
 @app.get("/health")

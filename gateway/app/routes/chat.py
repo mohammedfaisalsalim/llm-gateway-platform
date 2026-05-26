@@ -82,12 +82,15 @@ async def create_chat_completion(
             
         cfg = config_data[key]
         
+        # 3. Request execution using non-blocking async-thread worker allocations with full registry context
         res = await send_request(
             prompt=user_prompt,
             provider=cfg["provider"],
             model_id=cfg["model_id"],
             cost_per_input=cfg["cost_per_input_token"],
-            cost_per_output=cfg["cost_per_output_token"]
+            cost_per_output=cfg["cost_per_output_token"],
+            current_key=key,
+            config_data=config_data  # Pass the entire registry down for adaptive failover routing
         )
         
         await log_request_to_db(
@@ -99,19 +102,19 @@ async def create_chat_completion(
             output=res.output_text
         )
         
-        # 3. Real-Time Tracking & Absolute Wall-Clock Expiry Enforcement
+        # 4. Real-Time Tracking & Absolute Wall-Clock Expiry Enforcement
         if res.cost_usd > 0:
             redis_key = f"budget:spend:{x_team_id}"
             await limiter.redis.incrbyfloat(redis_key, res.cost_usd)
             
-            # Compute exact remaining seconds until UTC midnight boundary
+            # Compute exact remaining seconds until UTC midnight boundary with a 1-second floor guard
             now_utc = datetime.now(timezone.utc)
-            seconds_until_midnight = (
+            seconds_until_midnight = max(1, (
                 86400
                 - (now_utc.hour * 3600)
                 - (now_utc.minute * 60)
                 - now_utc.second
-            )
+            ))
             await limiter.redis.expire(redis_key, seconds_until_midnight)
         
         return {
