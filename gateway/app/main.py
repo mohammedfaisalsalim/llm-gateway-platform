@@ -6,15 +6,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.routes import chat
-from app.database import init_db
+from app.database import init_db, bootstrap_budget_cache
 from app.rate_limiter import limiter
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Runs on application startup
+    # --- STARTUP SEQUENCING ---
+    # 1. Initialize SQLite transactional log schema if it doesn't exist
     init_db()
+    
+    # 2. Synchronize and seed the Redis fast-cache from today's historical logs
+    await bootstrap_budget_cache(limiter.redis)
     yield
-    # Runs on application shutdown (Prevents production connection leaks)
+    
+    # --- SHUTDOWN SEQUENCING ---
+    # 3. Cleanly close the Redis connection pool to prevent socket leaks
     await limiter.redis.aclose()
 
 app = FastAPI(
@@ -23,7 +29,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Register routes
+# Register API routes
 app.include_router(chat.router, prefix="/v1")
 
 @app.get("/health")

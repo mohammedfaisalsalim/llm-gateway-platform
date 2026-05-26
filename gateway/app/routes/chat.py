@@ -1,14 +1,17 @@
 import yaml
 import time
+import logging
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Header, Response
 from app.models import ChatCompletionRequest
 from app.providers import send_request
 from app.classifier import classifier
 from app.database import log_request_to_db
-from app.rate_limiter import limiter  # Import our new rate limiting engine singleton
+from app.rate_limiter import limiter  
+from app.config import settings
 
 router = APIRouter()
+logger = logging.getLogger("uvicorn.error")
 
 CONFIG_PATH = Path(__file__).parent.parent / "models_config.yaml"
 
@@ -19,19 +22,41 @@ with open(CONFIG_PATH, "r") as f:
 async def create_chat_completion(
     request: ChatCompletionRequest, 
     response: Response,
-    x_team_id: str = Header(default="default-team")  # Capture calling identity via HTTP headers
+    x_team_id: str = Header(default="default-team")  
 ):
-    # --- DAY 8 PROTECTION RADAR CHECK ---
+    # --- DAY 8 PROTECTION RADAR CHECK (SLIDING WINDOW) ---
     is_limited, retry_after = await limiter.is_rate_limited(x_team_id)
     if is_limited:
-        # Inject standard compliance header alerting upstream caller frameworks when to back off
         response.headers["Retry-After"] = str(retry_after)
         raise HTTPException(
             status_code=429, 
             detail={"error": "Too Many Requests", "retry_after_seconds": retry_after}
         )
-    # ------------------------------------
+        
+    # --- DAY 10 FINANCIAL BUDGET CONTROL GUARDRAIL ---
+    try:
+        # Fetch the pre-aggregated daily balance from our fast Redis cache
+        cached_spend = await limiter.redis.get(f"budget:spend:{x_team_id}")
+        current_spend = float(cached_spend) if cached_spend is not None else 0.0
+        
+        if current_spend >= settings.DEFAULT_DAILY_BUDGET_USD:
+            raise HTTPException(
+                status_code=402,  # 402 is the official HTTP code for 'Payment Required'
+                detail={
+                    "error": "Budget Exceeded",
+                    "team_id": x_team_id,
+                    "current_daily_spend_usd": current_spend,
+                    "allowed_daily_budget_usd": settings.DEFAULT_DAILY_BUDGET_USD,
+                    "message": "Daily budget threshold breached. Access denied until tomorrow."
+                }
+            )
+    except HTTPException as budget_err:
+        raise budget_err
+    except Exception as e:
+        # Production hygiene fallback: if budget cache lookups fail, log error and fail open
+        logger.error(f"Budget Engine Degraded: {str(e)}")
 
+    # --- INFERENCE & EXECUTION LAYER ---
     try:
         user_prompt = request.messages[-1].content if request.messages else ""
         
@@ -66,6 +91,12 @@ async def create_chat_completion(
             cost=res.cost_usd,
             output=res.output_text
         )
+        
+        # 5. Atomically increment Redis cost trackers for real-time enforcement
+        if res.cost_usd > 0:
+            redis_key = f"budget:spend:{x_team_id}"
+            await limiter.redis.incrbyfloat(redis_key, res.cost_usd)
+            await limiter.redis.expire(redis_key, 86400)  # 24-hour key sliding expiry
         
         return {
             "id": f"gw-cmpl-{int(time.time() * 1000)}",
