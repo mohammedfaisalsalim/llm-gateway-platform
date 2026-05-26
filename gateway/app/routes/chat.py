@@ -2,6 +2,7 @@ import yaml
 import time
 import logging
 from pathlib import Path
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Header, Response
 from app.models import ChatCompletionRequest
 from app.providers import send_request
@@ -34,14 +35,15 @@ async def create_chat_completion(
         )
         
     # --- DAY 10 FINANCIAL BUDGET CONTROL GUARDRAIL ---
+    current_spend = 0.0
     try:
-        # Fetch the pre-aggregated daily balance from our fast Redis cache
         cached_spend = await limiter.redis.get(f"budget:spend:{x_team_id}")
         current_spend = float(cached_spend) if cached_spend is not None else 0.0
         
+        # 1. Hard Cutoff Interception Block
         if current_spend >= settings.DEFAULT_DAILY_BUDGET_USD:
             raise HTTPException(
-                status_code=402,  # 402 is the official HTTP code for 'Payment Required'
+                status_code=402,  
                 detail={
                     "error": "Budget Exceeded",
                     "team_id": x_team_id,
@@ -50,20 +52,27 @@ async def create_chat_completion(
                     "message": "Daily budget threshold breached. Access denied until tomorrow."
                 }
             )
+            
+        # 2. Early Warning Detection Flag (80%+ Budget Consumed)
+        warning_threshold = settings.DEFAULT_DAILY_BUDGET_USD * 0.80
+        if current_spend >= warning_threshold:
+            pct_used = (current_spend / settings.DEFAULT_DAILY_BUDGET_USD) * 100
+            pct_remaining = 100.0 - pct_used
+            response.headers["X-Budget-Warning"] = (
+                f"{pct_remaining:.1f}% daily budget remaining "
+                f"(${current_spend:.4f} of ${settings.DEFAULT_DAILY_BUDGET_USD:.2f} used)"
+            )
+            
     except HTTPException as budget_err:
         raise budget_err
     except Exception as e:
-        # Production hygiene fallback: if budget cache lookups fail, log error and fail open
         logger.error(f"Budget Engine Degraded: {str(e)}")
 
     # --- INFERENCE & EXECUTION LAYER ---
     try:
         user_prompt = request.messages[-1].content if request.messages else ""
-        
-        # 1. Determine prompt complexity tier via Scikit-learn singleton model weights
         tier = classifier.predict_tier(user_prompt)
         
-        # 2. Dynamic map routing using the integer tier outputs (0, 1, 2)
         if tier == 0:
             key = "llama3.2"
         elif tier == 1:
@@ -73,7 +82,6 @@ async def create_chat_completion(
             
         cfg = config_data[key]
         
-        # 3. Request execution using non-blocking async-thread worker allocations
         res = await send_request(
             prompt=user_prompt,
             provider=cfg["provider"],
@@ -82,7 +90,6 @@ async def create_chat_completion(
             cost_per_output=cfg["cost_per_output_token"]
         )
         
-        # 4. Record transactional history logs to the SQLite backend using a thread worker
         await log_request_to_db(
             prompt=user_prompt,
             model=res.model_used,
@@ -92,11 +99,20 @@ async def create_chat_completion(
             output=res.output_text
         )
         
-        # 5. Atomically increment Redis cost trackers for real-time enforcement
+        # 3. Real-Time Tracking & Absolute Wall-Clock Expiry Enforcement
         if res.cost_usd > 0:
             redis_key = f"budget:spend:{x_team_id}"
             await limiter.redis.incrbyfloat(redis_key, res.cost_usd)
-            await limiter.redis.expire(redis_key, 86400)  # 24-hour key sliding expiry
+            
+            # Compute exact remaining seconds until UTC midnight boundary
+            now_utc = datetime.now(timezone.utc)
+            seconds_until_midnight = (
+                86400
+                - (now_utc.hour * 3600)
+                - (now_utc.minute * 60)
+                - now_utc.second
+            )
+            await limiter.redis.expire(redis_key, seconds_until_midnight)
         
         return {
             "id": f"gw-cmpl-{int(time.time() * 1000)}",
@@ -118,6 +134,15 @@ async def create_chat_completion(
             }
         }
     except HTTPException as status_err: 
+        # If an 80%+ budget warning was calculated earlier, inject it into the outgoing failure response headers
+        if "X-Budget-Warning" in response.headers:
+            if status_err.headers is None:
+                status_err.headers = {}
+            status_err.headers["X-Budget-Warning"] = response.headers["X-Budget-Warning"]
         raise status_err
     except Exception as e: 
-        raise HTTPException(status_code=500, detail=str(e))
+        # Catch generic provider crashes, transform them to 502, and preserve our warning header
+        headers = {}
+        if "X-Budget-Warning" in response.headers:
+            headers["X-Budget-Warning"] = response.headers["X-Budget-Warning"]
+        raise HTTPException(status_code=502, detail=str(e), headers=headers)

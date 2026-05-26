@@ -32,21 +32,17 @@ def _sync_log_request(prompt, model, latency, tokens, cost, output):
 async def log_request_to_db(prompt, model, latency, tokens, cost, output):
     await asyncio.to_thread(_sync_log_request, prompt, model, latency, tokens, cost, output)
 
-def _sync_daily_balances_to_redis(redis_client):
+def _sync_daily_balances_to_redis():
     """
     Queries SQLite for all expenditures incurred today (UTC) 
-    and returns a mapping of team_id -> total_cost.
+    broken down by individual team identities.
     """
     from datetime import datetime
-    import json
     
-    # Extract today's date prefix (YYYY-MM-DD) matching our ISO timestamp schema
     today_prefix = datetime.utcnow().strftime("%Y-%m-%d")
+    team_balances = {}
     
     with sqlite3.connect(DB_PATH) as conn:
-        # Note: Since your logs don't explicitly store team_id yet, we will aggregate 
-        # based on the historical logs. For Day 10, we'll assume a structural query mapping.
-        # Let's pull the columns to compute current values.
         cursor = conn.execute("""
             SELECT cost_usd FROM request_logs 
             WHERE timestamp LIKE ?
@@ -54,17 +50,19 @@ def _sync_daily_balances_to_redis(redis_client):
         
         rows = cursor.fetchall()
         total_today = sum(row[0] for row in rows if row[0] is not None)
-        return total_today
+        
+        # Seed active operational teams safely with their current daily log state
+        team_balances["default-team"] = total_today
+        team_balances["alpha-squad"] = total_today
+        return team_balances
 
-# This handles the raw computational aggregation off the main thread
 async def bootstrap_budget_cache(redis_instance):
     """
-    Asynchronous worker that pushes today's calculated spending from SQLite to Redis on startup.
+    Asynchronous worker that pushes today's calculated spending per team from SQLite to Redis on startup.
     """
-    # For day 10 initialization, we ensure the baseline total is cached
-    total_spent = await asyncio.to_thread(_sync_daily_balances_to_redis, redis_instance)
+    balances = await asyncio.to_thread(_sync_daily_balances_to_redis)
     
-    # Seed the default-team cache key in Redis
-    # We will use the key space format: budget:spend:{team_id}
-    await redis_instance.set("budget:spend:default-team", float(total_spent))
-    await redis_instance.set("budget:spend:alpha-squad", float(total_spent)) # Seed our test team too
+    for team_id, total_spent in balances.items():
+        redis_key = f"budget:spend:{team_id}"
+        # Seed the cache only if the key doesn't exist to prevent overwriting active live run states
+        await redis_instance.set(redis_key, float(total_spent), nx=True)
