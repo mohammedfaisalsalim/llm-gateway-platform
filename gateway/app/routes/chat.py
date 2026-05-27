@@ -10,6 +10,7 @@ from app.classifier import classifier
 from app.database import log_request_to_db
 from app.rate_limiter import limiter  
 from app.config import settings
+from app.metrics import GATEWAY_ROUTING_DECISIONS, GATEWAY_BUDGET_EVENTS  # ← Import metrics
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
@@ -42,6 +43,8 @@ async def create_chat_completion(
         
         # 1. Hard Cutoff Interception Block
         if current_spend >= settings.DEFAULT_DAILY_BUDGET_USD:
+            # Record budget breach event metric
+            GATEWAY_BUDGET_EVENTS.labels(team_id=x_team_id, event_type="exceeded").inc()
             raise HTTPException(
                 status_code=402,  
                 detail={
@@ -56,6 +59,9 @@ async def create_chat_completion(
         # 2. Early Warning Detection Flag (80%+ Budget Consumed)
         warning_threshold = settings.DEFAULT_DAILY_BUDGET_USD * 0.80
         if current_spend >= warning_threshold:
+            # Record budget warning metric
+            GATEWAY_BUDGET_EVENTS.labels(team_id=x_team_id, event_type="warning").inc()
+            
             pct_used = (current_spend / settings.DEFAULT_DAILY_BUDGET_USD) * 100
             pct_remaining = 100.0 - pct_used
             response.headers["X-Budget-Warning"] = (
@@ -80,9 +86,11 @@ async def create_chat_completion(
         else:
             key = "mistral"
             
+        # Record classifier routing choice event metric
+        GATEWAY_ROUTING_DECISIONS.labels(model_tier=f"Tier {tier}", assigned_key=key).inc()
+            
         cfg = config_data[key]
         
-        # 3. Request execution using non-blocking async-thread worker allocations with full registry context
         res = await send_request(
             prompt=user_prompt,
             provider=cfg["provider"],
@@ -90,7 +98,7 @@ async def create_chat_completion(
             cost_per_input=cfg["cost_per_input_token"],
             cost_per_output=cfg["cost_per_output_token"],
             current_key=key,
-            config_data=config_data  # Pass the entire registry down for adaptive failover routing
+            config_data=config_data  
         )
         
         await log_request_to_db(
@@ -107,7 +115,6 @@ async def create_chat_completion(
             redis_key = f"budget:spend:{x_team_id}"
             await limiter.redis.incrbyfloat(redis_key, res.cost_usd)
             
-            # Compute exact remaining seconds until UTC midnight boundary with a 1-second floor guard
             now_utc = datetime.now(timezone.utc)
             seconds_until_midnight = max(1, (
                 86400
@@ -137,14 +144,12 @@ async def create_chat_completion(
             }
         }
     except HTTPException as status_err: 
-        # If an 80%+ budget warning was calculated earlier, inject it into the outgoing failure response headers
         if "X-Budget-Warning" in response.headers:
             if status_err.headers is None:
                 status_err.headers = {}
             status_err.headers["X-Budget-Warning"] = response.headers["X-Budget-Warning"]
         raise status_err
     except Exception as e: 
-        # Catch generic provider crashes, transform them to 502, and preserve our warning header
         headers = {}
         if "X-Budget-Warning" in response.headers:
             headers["X-Budget-Warning"] = response.headers["X-Budget-Warning"]

@@ -1,14 +1,27 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:7.2-alpine
     container_name: gateway-redis
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
     restart: always
 
-volumes:
-  redis_data:
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: gateway-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # Allows the container to talk to your Windows localhost app
+    restart: always
+
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: gateway-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin # Default password for your local development login
+    restart: always

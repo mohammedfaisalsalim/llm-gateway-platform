@@ -2,6 +2,7 @@ import asyncio
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # Automatically load local .env properties configurations
 load_dotenv()
@@ -18,17 +19,15 @@ async def lifespan(app: FastAPI):
     await bootstrap_budget_cache(limiter.redis)
     
     # Mount the proactive loop task onto the background worker allocations
-    app.state.background_health_task = asyncio.create_task(health_check_loop())
+    #app.state.background_health_task = asyncio.create_task(health_check_loop())
     yield
     
     # --- SHUTDOWN SEQUENCING ---
-    # FIX 4: Await the cancelled task tracking safely to prevent raw unhandled exception dump logs
     task = app.state.background_health_task
     task.cancel()
     try:
         await task
     except asyncio.CancelledError:
-        # Expected behavior for clean worker shutdowns
         pass
         
     await limiter.redis.aclose()
@@ -38,6 +37,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Expose standard and system metrics monitoring schemas
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 app.include_router(chat.router, prefix="/v1")
 

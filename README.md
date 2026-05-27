@@ -96,3 +96,9 @@ Bash
 curl -X POST "http://localhost:8000/v1/chat/completions" \
      -H "Content-Type: application/json" \
      -d '{"messages": [{"role": "user", "content": "Analyze the log stream structure, evaluate if
+
+### Tier 2 Complexity Routing Test
+To test the higher-tier complexity classification routing path, fire the following payload:
+
+```powershell
+curl.exe -i -X POST "http://localhost:8000/v1/chat/completions" -H "Content-Type: application/json" -H "X-Team-Id: alpha-squad" -d "{\`"messages\`": [{\`"role\`": \`"user\`", \`"content\`": \`"Analyze the log stream structure, evaluate if the current routing tiers are optimal, and compare alternative configurations in JSON format\`"}]}"

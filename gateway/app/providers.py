@@ -7,6 +7,7 @@ import google.generativeai as genai
 from fastapi import HTTPException
 from app.models import StandardResponse
 from app.rate_limiter import limiter  
+from app.metrics import GATEWAY_CIRCUIT_TRIPS, GATEWAY_FAILOVER_HOPS  # ← Import metrics
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -61,6 +62,9 @@ async def send_request(
             fallback_key = get_fallback_key(current_key)
             logger.warning(f"🚨 CIRCUIT OPEN for '{current_key}'. Skipping execution and jumping to '{fallback_key}'")
             
+            # Record failover hop metric
+            GATEWAY_FAILOVER_HOPS.labels(initial_key=current_key, fallback_key=fallback_key).inc()
+            
             cfg = config_data[fallback_key]
             return await send_request(
                 prompt=prompt,
@@ -106,22 +110,27 @@ async def send_request(
     except Exception as e:
         logger.error(f"❌ Provider Execution Failure on '{current_key}': {str(e)}")
         try:
-            # FIX 1: Enforce atomic transactional changes using a secure context manager
             async with limiter.redis.pipeline(transaction=True) as pipe:
                 pipe.incr(failure_count_key)
                 pipe.expire(failure_count_key, 60)
                 results = await pipe.execute()
             
-            # Extract the increment results directly from the first index response array element
             current_fails = results[0] if results else 0
             if current_fails and int(current_fails) >= 5:
                 await limiter.redis.set(f"circuit:{current_key}:state", "open")
                 logger.error(f"💥 FORCED CIRCUIT TRIP: '{current_key}' has crossed 5 failures.")
+                
+                # Record circuit trip event metric
+                GATEWAY_CIRCUIT_TRIPS.labels(provider_key=current_key).inc()
         except Exception as pipe_err:
             logger.error(f"Failed to record atomic failure metric: {str(pipe_err)}")
 
         # Move to next fallback with incremented structural hops
         fallback_key = get_fallback_key(current_key)
+        
+        # Record failover hop metric during active exception rerouting
+        GATEWAY_FAILOVER_HOPS.labels(initial_key=current_key, fallback_key=fallback_key).inc()
+        
         cfg = config_data[fallback_key]
         return await send_request(
             prompt=prompt,
@@ -142,5 +151,5 @@ async def send_request(
         total_tokens=p_tokens + c_tokens, 
         latency_ms=latency_ms,
         cost_usd=(p_tokens * cost_per_input) + (c_tokens * cost_per_output), 
-        model_used=model_id  # FIX 2: Restored to raw string value to prevent analytics labeling fragmentation
+        model_used=model_id  
     )
