@@ -31,7 +31,7 @@ async def send_request(
     cost_per_output: float, 
     current_key: str, 
     config_data: dict,
-    failover_hops: int = 0  # ← Added structural depth counter
+    failover_hops: int = 0  
 ) -> StandardResponse:
     start_time = time.time()
     
@@ -46,7 +46,14 @@ async def send_request(
             }
         )
     
-    # 1. Circuit Breaker Check
+    # 1. Gemini Configuration Validation Guard
+    if provider == "gemini" and not GEMINI_KEY:
+        raise HTTPException(
+            status_code=501,
+            detail=f"Gemini API key is missing from gateway environment configuration."
+        )
+    
+    # 2. Circuit Breaker Pre-Flight Check
     failure_count_key = f"circuit:{current_key}:failures"
     try:
         fail_count = await limiter.redis.get(failure_count_key)
@@ -63,14 +70,14 @@ async def send_request(
                 cost_per_output=cfg["cost_per_output_token"],
                 current_key=fallback_key,
                 config_data=config_data,
-                failover_hops=failover_hops + 1  # Increment hop count
+                failover_hops=failover_hops + 1  
             )
     except HTTPException as http_err:
         raise http_err
     except Exception as redis_err:
         logger.error(f"Circuit Breaker Cache Lookup Degraded: {str(redis_err)}")
 
-    # 2. Downstream Execution Engine
+    # 3. Downstream Execution Engine
     output_text, p_tokens, c_tokens = "", 0, 0
     try:
         if provider == "ollama":
@@ -84,8 +91,6 @@ async def send_request(
             c_tokens = res.get('eval_count', len(output_text) // 4)
                 
         elif provider == "gemini":
-            if not GEMINI_KEY:
-                raise ValueError("Gemini API key is missing from environment variables.")
             model = genai.GenerativeModel(model_id)
             res = await asyncio.to_thread(model.generate_content, prompt)
             output_text = res.text
@@ -101,17 +106,19 @@ async def send_request(
     except Exception as e:
         logger.error(f"❌ Provider Execution Failure on '{current_key}': {str(e)}")
         try:
-            pipe = limiter.redis.pipeline()
-            pipe.incr(failure_count_key)
-            pipe.expire(failure_count_key, 60)
-            await pipe.execute()
+            # FIX 1: Enforce atomic transactional changes using a secure context manager
+            async with limiter.redis.pipeline(transaction=True) as pipe:
+                pipe.incr(failure_count_key)
+                pipe.expire(failure_count_key, 60)
+                results = await pipe.execute()
             
-            current_fails = await limiter.redis.get(failure_count_key)
+            # Extract the increment results directly from the first index response array element
+            current_fails = results[0] if results else 0
             if current_fails and int(current_fails) >= 5:
                 await limiter.redis.set(f"circuit:{current_key}:state", "open")
                 logger.error(f"💥 FORCED CIRCUIT TRIP: '{current_key}' has crossed 5 failures.")
-        except Exception:
-            pass
+        except Exception as pipe_err:
+            logger.error(f"Failed to record atomic failure metric: {str(pipe_err)}")
 
         # Move to next fallback with incremented structural hops
         fallback_key = get_fallback_key(current_key)
@@ -124,7 +131,7 @@ async def send_request(
             cost_per_output=cfg["cost_per_output_token"],
             current_key=fallback_key,
             config_data=config_data,
-            failover_hops=failover_hops + 1  # Increment hop count
+            failover_hops=failover_hops + 1  
         )
             
     latency_ms = (time.time() - start_time) * 1000
@@ -135,5 +142,5 @@ async def send_request(
         total_tokens=p_tokens + c_tokens, 
         latency_ms=latency_ms,
         cost_usd=(p_tokens * cost_per_input) + (c_tokens * cost_per_output), 
-        model_used=f"{model_id} (via {current_key} failover ring)"
+        model_used=model_id  # FIX 2: Restored to raw string value to prevent analytics labeling fragmentation
     )
