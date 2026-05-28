@@ -1,7 +1,7 @@
 import time
 from fastapi import APIRouter, Header, HTTPException
 from app.models import ChatCompletionRequest, StandardResponse
-from app.classifier import predict_complexity
+from app.classifier import predict_complexity_tier
 from app.database import log_request_to_db  # This is a synchronous DB function
 
 router = APIRouter(prefix="/v1", tags=["Inference"])
@@ -11,15 +11,21 @@ async def chat_completions(
     body: ChatCompletionRequest,
     x_team_id: str = Header(..., alias="X-Team-Id")
 ):
-    # 1. Run input parsing and join history logs to pass to the ML layer
+    """
+    Core Chat Completion router endpoint.
+    Ingests payloads, maps cognitive prompt complexity via Scikit-Learn pipelines, 
+    and commits multi-tenant analytics logs natively into the local SQLite engine layer.
+    """
+    # 1. Run input parsing and isolate the latest message content block
     user_content = body.messages[-1].content if body.messages else ""
     
     # 2. Execute Scikit-Learn routing optimization classification tier logic
-    tier = predict_complexity(user_content)
+    tier = predict_complexity_tier(user_content)
     
-    # Simulate internal processing milestones for tracking metrics configurations
+    # Track performance milestones for infrastructural metric dashboards
     start_time = time.time()
     
+    # 3. Resolve downstream model assignments based on complexity prediction evaluations
     if tier == 0:
         model_assigned = "llama3.2"
         output_text = "Infrastructure response simulated payload from Tier 0 cluster."
@@ -37,7 +43,7 @@ async def chat_completions(
     total_tk = prompt_tk + comp_tk
     cost = total_tk * 0.000002
 
-    # FIX 5: Dropped 'await' modifier. Call your sync SQLite transaction engine natively
+    # 4. Invoke synchronous SQLite database execution natively without an illegal 'await'
     log_request_to_db(
         team_id=x_team_id,
         model_used=model_assigned,
@@ -48,6 +54,7 @@ async def chat_completions(
         cost_usd=cost
     )
 
+    # 5. Marshal the structured object back to the client interface layer
     return StandardResponse(
         model_used=model_assigned,
         latency_ms=latency,
