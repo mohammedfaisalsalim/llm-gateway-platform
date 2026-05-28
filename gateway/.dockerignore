@@ -1,0 +1,10 @@
+# Exclude credential keys from being baked into final image layers
+.env
+*.db
+gateway_metrics.db
+
+# Exclude temporary execution build outputs
+__pycache__/
+*.pyc
+.venv/
+*.log
