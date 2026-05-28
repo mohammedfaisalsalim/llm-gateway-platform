@@ -1,48 +1,50 @@
-version: '3.8'
-
 services:
-  gateway:
-    build: ./gateway
-    container_name: llm-gateway
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./gateway:/app
-    env_file:
-      - ./gateway/.env
-    environment:
-      - REDIS_HOST=gateway-redis
-      - REDIS_PORT=6379
-      - OLLAMA_HOST=http://host.docker.internal:11434  # <-- FIX: Bridges container requests to your Windows desktop Ollama app
-    depends_on:
-      - redis
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  # Allows the container network to cleanly resolve the host keyword
-    restart: always
-
-  redis:
-    image: redis:7.2-alpine
+  gateway-redis:
+    image: redis/redis-stack-server:latest
     container_name: gateway-redis
     ports:
       - "6379:6379"
-    restart: always
+      - "8001:8001"
+    networks:
+      - gateway-network
 
-  prometheus:
-    image: prom/prometheus:v2.45.0
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: llm-gateway
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./gateway/.env
+    depends_on:
+      - gateway-redis
+    networks:
+      - gateway-network
+
+  gateway-prometheus:
+    image: prom/prometheus:latest
     container_name: gateway-prometheus
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      # FIXED: Points cleanly to your true root-level prometheus folder config
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "9090:9090"
-    restart: always
+    networks:
+      - gateway-network
 
-  grafana:
-    image: grafana/grafana:10.0.0
+  gateway-grafana:
+    image: grafana/grafana:latest
     container_name: gateway-grafana
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
     ports:
       - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning # Dynamic first-boot provisioning link hook
-    restart: always
+    depends_on:
+      - gateway-prometheus
+    networks:
+      - gateway-network
+
+networks:
+  gateway-network:
+    driver: bridge

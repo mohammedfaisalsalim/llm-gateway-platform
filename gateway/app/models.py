@@ -1,20 +1,20 @@
-from pydantic import BaseModel, Field
-from typing import Optional, List
-
-class StandardResponse(BaseModel):
-    output_text: str
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    latency_ms: float
-    cost_usd: float
-    model_used: str
+from pydantic import BaseModel, ConfigDict
+from typing import List
 
 class ChatMessage(BaseModel):
-    role: str = Field(..., description="'system', 'user', or 'assistant'")
+    role: str
     content: str
 
 class ChatCompletionRequest(BaseModel):
-    model: Optional[str] = "auto"
+    model_config = ConfigDict(protected_namespaces=())
     messages: List[ChatMessage]
-    temperature: Optional[float] = 0.7
+
+# MUST BE NAMED EXACTLY 'StandardResponse' TO MATCH app/providers.py IMPORTS
+class StandardResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+    
+    model_used: str
+    latency_ms: float
+    total_tokens: int
+    cost_usd: float
+    output_text: str

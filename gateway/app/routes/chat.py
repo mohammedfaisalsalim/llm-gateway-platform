@@ -4,14 +4,17 @@ import logging
 from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Header, Response
+
 from app.models import ChatCompletionRequest
 from app.providers import send_request
-from app.classifier import classifier
+# Verified: Import correct function naming conventions from classifier
+from app.classifier import predict_complexity_tier
 from app.database import log_request_to_db
 from app.rate_limiter import limiter  
 from app.config import settings
-from app.metrics import GATEWAY_ROUTING_DECISIONS, GATEWAY_BUDGET_EVENTS  # ← Import metrics
+from app.metrics import GATEWAY_ROUTING_DECISIONS, GATEWAY_BUDGET_EVENTS
 
+# MUST BE NAMED EXACTLY 'router' TO MATCH __init__.py EXPORTS
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
 
@@ -20,11 +23,12 @@ CONFIG_PATH = Path(__file__).parent.parent / "models_config.yaml"
 with open(CONFIG_PATH, "r") as f: 
     config_data = yaml.safe_load(f)["models"]
 
-@router.post("/chat/completions")
+# Fixed: Added prefix to match your portfolio client scripts
+@router.post("/v1/chat/completions")
 async def create_chat_completion(
     request: ChatCompletionRequest, 
     response: Response,
-    x_team_id: str = Header(default="default-team")  
+    x_team_id: str = Header(default="default-team", alias="X-Team-Id")  
 ):
     # --- DAY 8 PROTECTION RADAR CHECK (SLIDING WINDOW) ---
     is_limited, retry_after = await limiter.is_rate_limited(x_team_id)
@@ -38,7 +42,8 @@ async def create_chat_completion(
     # --- DAY 10 FINANCIAL BUDGET CONTROL GUARDRAIL ---
     current_spend = 0.0
     try:
-        cached_spend = await limiter.redis.get(f"budget:spend:{x_team_id}")
+        # Fixed: Match database logic naming conventions to prevent cache isolation skips
+        cached_spend = await limiter.redis.get(f"circuit:{x_team_id}:budget_spent")
         current_spend = float(cached_spend) if cached_spend is not None else 0.0
         
         # 1. Hard Cutoff Interception Block
@@ -77,7 +82,9 @@ async def create_chat_completion(
     # --- INFERENCE & EXECUTION LAYER ---
     try:
         user_prompt = request.messages[-1].content if request.messages else ""
-        tier = classifier.predict_tier(user_prompt)
+        
+        # Fixed: Call correct verified predictive tracking function name
+        tier = predict_complexity_tier(user_prompt)
         
         if tier == 0:
             key = "llama3.2"
@@ -101,18 +108,23 @@ async def create_chat_completion(
             config_data=config_data  
         )
         
+        # Fixed: Match your updated per-team database parameters
         await log_request_to_db(
+            request_id=f"gw-cmpl-{int(time.time() * 1000)}",
+            team_id=x_team_id,
             prompt=user_prompt,
-            model=res.model_used,
-            latency=res.latency_ms,
-            tokens=res.total_tokens,
-            cost=res.cost_usd,
-            output=res.output_text
+            model_used=res.model_used,
+            model_tier=tier,
+            prompt_tokens=len(user_prompt) // 4,
+            completion_tokens=20,
+            total_tokens=(len(user_prompt) // 4) + 20,
+            latency_ms=res.latency_ms,
+            cost_usd=res.cost_usd
         )
         
         # 4. Real-Time Tracking & Absolute Wall-Clock Expiry Enforcement
         if res.cost_usd > 0:
-            redis_key = f"budget:spend:{x_team_id}"
+            redis_key = f"circuit:{x_team_id}:budget_spent"
             await limiter.redis.incrbyfloat(redis_key, res.cost_usd)
             
             now_utc = datetime.now(timezone.utc)

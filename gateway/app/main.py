@@ -20,7 +20,7 @@ from app.config import settings
 from app.database import init_db
 from app.classifier import bootstrap_classifier
 from app.health import health_check_loop
-from app.routes import router
+from app.routes.chat import router
 
 # Configure logging layout format
 logging.basicConfig(level=logging.INFO)
