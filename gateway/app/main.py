@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-# FIX 2: Environment variables MUST be loaded before any internal app modules import
+# Environment variables MUST be loaded before any internal app modules import
 load_dotenv()
 
 import asyncio
@@ -11,10 +11,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.database import init_db
+from app.database import init_db, bootstrap_budget_cache
 from app.classifier import bootstrap_classifier
 from app.health import health_check_loop
 from app.routes.chat import router
+from app.rate_limiter import limiter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvicorn.error")
@@ -25,12 +26,14 @@ async def lifespan(app: FastAPI):
     init_db()
     bootstrap_classifier()
     
+    # Pre-warm real-time multi-tenant financial caches out of disk ledgers
+    bootstrap_budget_cache(limiter.redis)
+    
     logger.info("⏱️ Activating background monitoring loops...")
     app.state.background_health_task = asyncio.create_task(health_check_loop())
     yield
     
     logger.info("🛑 Initiating graceful teardown sequences...")
-    # FIX 4: Use hasattr to completely eliminate AttributeError crashes on startup failures
     if hasattr(app.state, 'background_health_task'):
         task = app.state.background_health_task
         task.cancel()
