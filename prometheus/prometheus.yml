@@ -1,9 +1,9 @@
 global:
-  scrape_interval: 5s # Scrape metrics every 5 seconds for real-time dashboard updates
-  evaluation_interval: 5s
+  scrape_interval: 15s     # Adjusted from 5s to 15s to comply with spec constraints and avoid storage inflation
+  evaluation_interval: 15s
 
 scrape_configs:
   - job_name: "llm-gateway"
     metrics_path: "/metrics"
     static_configs:
-      - targets: ["host.docker.internal:8000"] # Points back to your Windows host machine where Uvicorn is running
+      - targets: ["gateway:8000"] # Direct container network layout routing (resolves Critical Defect 1)

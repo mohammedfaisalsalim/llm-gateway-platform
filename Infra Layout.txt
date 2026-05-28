@@ -1,0 +1,50 @@
+==================================== TIER 1: CLIENT FRONTEND ====================================
+     STUDENT / STAFF USER 📱  ◀───────────────────────────┐
+            │                                             │
+      (1)   │ Types Prompt & Hits Send              (8)   │ Receives Clean AI text response
+            ▼                                             │
+   ┌──────────────────────────────────────────────────────────────────────────────────┐
+   │                       SAMPLE FRONTEND CAMPUS PORTAL (Streamlit UI)               │
+   └──────────────────────────────────────────────────────────────────────────────────────────┘
+            │                                             ▲
+      (2)   │ Sends HTTP POST Payload                     │ (7) Returns Structured JSON
+            │ (Prompt text + 'X-Team-Id' Header)          │     (AI Text + Custom Gateway Metadata)
+            ▼                                             │
+================================== TIER 2: GATEWAY MIDDLEWARE ==================================
+   ┌──────────────────────────────────────────────────────────────────────────────────────────┐
+   │                          FASTAPI REVERSE-PROXY CENTRAL ENGINE                            │
+   ├──────────────────────────────────────────────────────────────────────────────────────────┤
+   │  🔒 TRAFFIC SHAPER (Redis sliding-window rate limiter - Blocks Bandwidth Strain/Spam)   │
+   │  💰 FINANCIAL GUARDRAIL (Redis ledger tracker - Tracks USD Spend / Injects Warning)       │
+   │  🧠 COGNITIVE OPTIMIZER (Scikit-Learn ML Classifier - Predicts Prompt Complexity Tier)   │
+   └──────────────────────────────────────────────────────────────────────────────────────────┘
+            │                                             ▲
+      (3)   │ Dynamic Route Dispatched                    │ (6) Raw Text and Token Metrics Handed Back
+            ▼                                             │
+============================= TIER 3: AI EXECUTION & MONITORING LAYERS =========================
+   ┌──────────────────────────────────────────────────────────────────────────────────────────┐
+   │                    SELF-HEALING CIRCUIT BREAKER RING & HEALTH ENGINE                     │
+   │  • Detects outages within 10ms & silently shifts traffic to deterministic ring fallbacks │
+   │  • Asynchronous 30-second background loop pings and resets tripped engines automatically │
+   └──────────────────────────────────────────────────────────────────────────────────────────┘
+            │                                             │
+    ┌───────┴───────────────────────┐             ┌───────┴─────────────────────────┐
+    ▼ (Tier 0 Tasks)                ▼ (Tier 3)    ▼ (Tier 1 & 2 Tasks)              ▼ (Tier 3)
+┌──────────────────────────────────────┐      ┌──────────────────────────────────────┐
+│         LOCAL HARDWARE TIER          │      │         EXTERNAL CLOUD TIER          │
+├──────────────────────────────────────┤      ├──────────────────────────────────────┤
+│ • Ollama Instance (Llama 3.2:3b)     │      │ • Google Gemini 2.0 Flash API        │
+│ • Ollama Instance (Mistral 7b Backup)│      │ • Anthropic Claude API (Backup Node) │
+└──────────────────────────────────────┘      └──────────────────────────────────────┘
+            │                                             │
+            └───────────────────────┬─────────────────────┘
+                                    │
+                              (4)   │ Handover Metrics & Analytics Payload
+                                    ▼
+   ┌──────────────────────────────────────────────────────────────────────────────────────────┐
+   │                          PRODUCTION MONITORING & AUDIT LAYER                             │
+   ├──────────────────────────────────────────────────────────────────────────────────────────┤
+   │  🗄️ TRANSACTIONAL LOGS (SQLite: Thread-isolated database storing raw output text logs)   │
+   │  🕵️ METRICS INSPECTOR  (Prometheus: Scrapes numeric events/errors every 5 seconds)       │
+   │  📊 MISSION CONTROL NOC (Grafana: Displays live gauges for budgets, rates, & outages)    │
+   └──────────────────────────────────────────────────────────────────────────────────────────┘

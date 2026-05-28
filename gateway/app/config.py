@@ -6,12 +6,15 @@ class Settings(BaseSettings):
     APP_NAME: str = "LLM-Gateway"
     DEBUG: bool = False
     
-    # Provider Secret Keys (Optional on startup to prevent validation crashes)
+    # Provider Secret Keys
     GEMINI_API_KEY: str = ""
     
     # Infrastructure Backends
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
+
+    # --- FIX: Add this line to map the Ollama base host address safely ---
+    OLLAMA_HOST: str = "http://host.docker.internal:11434"
 
     # Sliding Window Parameters
     DEFAULT_RATE_LIMIT_RPM: int = 60  

@@ -1,4 +1,25 @@
+version: '3.8'
+
 services:
+  gateway:
+    build: ./gateway
+    container_name: llm-gateway
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./gateway:/app
+    env_file:
+      - ./gateway/.env
+    environment:
+      - REDIS_HOST=gateway-redis
+      - REDIS_PORT=6379
+      - OLLAMA_HOST=http://host.docker.internal:11434  # <-- FIX: Bridges container requests to your Windows desktop Ollama app
+    depends_on:
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Allows the container network to cleanly resolve the host keyword
+    restart: always
+
   redis:
     image: redis:7.2-alpine
     container_name: gateway-redis
@@ -13,8 +34,6 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
       - "9090:9090"
-    extra_hosts:
-      - "host.docker.internal:host-gateway" # Allows the container to talk to your Windows localhost app
     restart: always
 
   grafana:
@@ -23,5 +42,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin # Default password for your local development login
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning # Dynamic first-boot provisioning link hook
     restart: always
