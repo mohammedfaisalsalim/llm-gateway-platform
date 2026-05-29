@@ -39,10 +39,10 @@ def log_request_to_db(team_id, model_used, latency_ms, prompt_tokens, completion
     except Exception as e:
         logger.error(f"❌ Metrics transaction failed database persistence write: {str(e)}")
 
-def bootstrap_budget_cache(redis_client):
+async def bootstrap_budget_cache(redis_client):
     """
     Pre-warms multi-tenant balance allocations out of transaction logs into Redis memory caches.
-    Prevents budget resets whenever containers or services undergo automated hot restarts.
+    Guarantees initialization completion before the event loop handles any incoming requests.
     """
     try:
         if not os.path.exists(DB_PATH):
@@ -60,10 +60,10 @@ def bootstrap_budget_cache(redis_client):
             for team_id, daily_cost in rows:
                 if daily_cost:
                     budget_key = f"budget:{team_id}:daily_usd"
-                    # Synchronous loop handles loading before thread handovers to prevent processing spikes
-                    logger.info(f"💰 Pre-warming ledger budget cache: Team '{team_id}' -> Realized Cost Value: ${daily_cost:.6f}")
-                    # Since bootstrap runs inside lifespan thread spaces, execute commands directly
-                    import asyncio
-                    asyncio.get_event_loop().create_task(redis_client.set(budget_key, float(daily_cost)))
+                    logger.info(f"💰 Seeding budget cache entry: Team '{team_id}' -> Realized Cost Value: ${daily_cost:.6f}")
+                    
+                    # Await the set operation natively with nx=True to ensure safe write concurrency
+                    await redis_client.set(budget_key, float(daily_cost), nx=True)
+                    
     except Exception as e:
-        logger.error(f"⚠️ Failed to gracefully bootstrap tracking memory cache states: {str(e)}")
+        logger.error(f"⚠️ Failed to safely bootstrap tracking memory cache states: {str(e)}")

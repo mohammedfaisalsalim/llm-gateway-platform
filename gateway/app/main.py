@@ -26,8 +26,8 @@ async def lifespan(app: FastAPI):
     init_db()
     bootstrap_classifier()
     
-    # Pre-warm real-time multi-tenant financial caches out of disk ledgers
-    bootstrap_budget_cache(limiter.redis)
+    # --- FIXED: Natively await the async cache utility to block incoming connection data races ---
+    await bootstrap_budget_cache(limiter.redis)
     
     logger.info("⏱️ Activating background monitoring loops...")
     app.state.background_health_task = asyncio.create_task(health_check_loop())
