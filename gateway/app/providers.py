@@ -20,11 +20,12 @@ def get_fallback_key(current_key: str) -> str:
     """
     Deterministic fallback loop mapping engine to achieve high-availability.
     If an engine fails, it shifts gracefully across tiers in under 10ms.
+    Ring: llama3.2 → gemini-flash → llama3.1 → llama3.2 (loops).
     """
     mapping = {
-        "llama3.2": "gemini-flash", 
-        "gemini-flash": "mistral", 
-        "mistral": "llama3.2"
+        "llama3.2": "gemini-flash",
+        "gemini-flash": "llama3.1",
+        "llama3.1": "llama3.2",
     }
     return mapping.get(current_key, "llama3.2")
 

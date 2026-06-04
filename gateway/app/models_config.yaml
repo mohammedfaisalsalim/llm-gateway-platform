@@ -1,19 +1,25 @@
 models:
+  # Tier 0 — fast local model for simple / trivial prompts (~2 GB)
   llama3.2:
     provider: "ollama"
     model_id: "llama3.2:3b"
     quality_tier: 1
     cost_per_input_token: 0.0
     cost_per_output_token: 0.0
+
+  # Tier 1 — balanced cloud model for medium complexity
   gemini-flash:
     provider: "gemini"
-    model_id: "gemini-2.0-flash"
+    model_id: "gemini-2.5-flash"
     quality_tier: 2
     cost_per_input_token: 0.000000075
     cost_per_output_token: 0.00000025
-  mistral:
+
+  # Tier 2 — beefy local model for complex reasoning (~5 GB)
+  # Shared with the NOC chatbot's direct-Ollama mode for a unified model fleet.
+  llama3.1:
     provider: "ollama"
-    model_id: "mistral:7b"
+    model_id: "llama3.1:8b"
     quality_tier: 3
     cost_per_input_token: 0.0
     cost_per_output_token: 0.0
