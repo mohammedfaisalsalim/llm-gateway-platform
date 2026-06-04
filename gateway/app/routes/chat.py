@@ -8,7 +8,16 @@ from app.classifier import predict_complexity_tier
 from app.database import log_request_to_db
 from app.rate_limiter import limiter
 from app.providers import send_request
-from app.metrics import GATEWAY_ROUTING_DECISIONS, GATEWAY_BUDGET_EVENTS
+from app.metrics import (
+    GATEWAY_ROUTING_DECISIONS,
+    GATEWAY_BUDGET_EVENTS,
+    GATEWAY_PROMPT_TOKENS,
+    GATEWAY_COMPLETION_TOKENS,
+    GATEWAY_COST_USD,
+    GATEWAY_REQUEST_BYTES,
+    GATEWAY_RESPONSE_BYTES,
+    GATEWAY_INFERENCE_LATENCY,
+)
 
 router = APIRouter(prefix="/v1", tags=["Inference"])
 
@@ -62,12 +71,13 @@ async def chat_completions(
     config_matrix = load_models_config()["models"]
 
     # 4. Deterministic Tier-to-Model Mapping Logic
+    # Fleet shared with the NOC chatbot for a single source of truth on models.
     if tier == 0:
-        model_key = "llama3.2"
+        model_key = "llama3.2"      # llama3.2:3b — fast local
     elif tier == 1:
-        model_key = "gemini-flash"
+        model_key = "gemini-flash"  # gemini-2.5-flash — balanced cloud
     else:
-        model_key = "mistral"
+        model_key = "llama3.1"      # llama3.1:8b — heavy local (same model the chatbot uses directly)
 
     # Track structural routing classification decisions metrics inside Prometheus
     GATEWAY_ROUTING_DECISIONS.labels(model_tier=f"Tier_{tier}", assigned_key=model_key).inc()
@@ -102,6 +112,28 @@ async def chat_completions(
         completion_tokens=response_payload.completion_tokens,
         total_tokens=response_payload.total_tokens,
         cost_usd=response_payload.cost_usd
+    )
+
+    # 8. Emit per-request Prometheus metrics for token economics and bandwidth.
+    #    These power the Grafana dashboards for cost, tokens, and payload size.
+    _model = response_payload.model_used
+    GATEWAY_PROMPT_TOKENS.labels(team_id=x_team_id, model_id=_model).inc(
+        response_payload.prompt_tokens
+    )
+    GATEWAY_COMPLETION_TOKENS.labels(team_id=x_team_id, model_id=_model).inc(
+        response_payload.completion_tokens
+    )
+    GATEWAY_COST_USD.labels(team_id=x_team_id, model_id=_model).inc(
+        response_payload.cost_usd
+    )
+    GATEWAY_REQUEST_BYTES.labels(team_id=x_team_id, model_id=_model).inc(
+        len(user_content.encode("utf-8"))
+    )
+    GATEWAY_RESPONSE_BYTES.labels(team_id=x_team_id, model_id=_model).inc(
+        len(response_payload.output_text.encode("utf-8"))
+    )
+    GATEWAY_INFERENCE_LATENCY.labels(model_id=_model).observe(
+        response_payload.latency_ms / 1000.0
     )
 
     return response_payload
