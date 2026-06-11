@@ -98,9 +98,17 @@ async def send_request(
             
             # Initialize a thread-safe custom async client container layout configuration
             client = ollama.AsyncClient(host=target_host)
+            # Bumped num_ctx to 32K so large QC-dump / batch-summary prompts
+            # do not overflow Ollama's default 2048-token window. Matches the
+            # chatbot's direct-Ollama path. llama3.1:8b supports 128K, so 32K
+            # is a safe middle ground that won't OOM most hosts.
             res = await client.chat(
-                model=model_id, 
-                messages=[{'role': 'user', 'content': prompt}]
+                model=model_id,
+                messages=[{'role': 'user', 'content': prompt}],
+                options={
+                    "num_ctx": 32768,
+                    "temperature": 0.2,
+                },
             )
             output_text = res['message']['content']
             p_tokens = res.get('prompt_eval_count', len(prompt) // 4)
