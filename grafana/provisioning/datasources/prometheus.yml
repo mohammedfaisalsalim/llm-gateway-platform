@@ -1,7 +1,12 @@
 apiVersion: 1
 
 datasources:
-  - name: Prometheus   # <-- Matches the 'Prometheus' keyword we just replaced in your JSON!
+  - name: Prometheus
+    # Explicit UID so dashboards can reference this datasource deterministically.
+    # The 4-panel gateway_dashboard.json queries `"uid": "prometheus"`. If this
+    # is missing, Grafana auto-generates a random UID and every panel returns
+    # "data source not found" silently.
+    uid: prometheus
     type: prometheus
     url: http://gateway-prometheus:9090
     isDefault: true

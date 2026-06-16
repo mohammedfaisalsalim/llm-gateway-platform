@@ -67,17 +67,20 @@ async def chat_completions(
         GATEWAY_BUDGET_EVENTS.labels(team_id=x_team_id, event_type="warning").inc()
 
     # 3. Machine Learning Cognitive Evaluation Layer
+    # The classifier still runs so its tier label is emitted to Prometheus
+    # (useful for understanding query complexity distribution), but the routing
+    # decision below is hard-pinned to llama3.1:8b per operator preference.
     tier = predict_complexity_tier(user_content)
     config_matrix = load_models_config()["models"]
 
     # 4. Deterministic Tier-to-Model Mapping Logic
-    # Fleet shared with the NOC chatbot for a single source of truth on models.
-    if tier == 0:
-        model_key = "llama3.2"      # llama3.2:3b — fast local
-    elif tier == 1:
-        model_key = "gemini-flash"  # gemini-2.5-flash — balanced cloud
-    else:
-        model_key = "llama3.1"      # llama3.1:8b — heavy local (same model the chatbot uses directly)
+    # Locked to llama3.1:8b: end-to-end testing showed it gave consistently
+    # accurate, well-structured answers on the NOC corpus (door / wifi / cctv
+    # tables + SOPs), whereas smaller tiers occasionally mashed columns or
+    # missed cross-source synthesis. The classifier output is retained only
+    # for telemetry; failover to gemini-flash / llama3.2 still happens
+    # automatically inside send_request() if llama3.1 is unhealthy.
+    model_key = "llama3.1"
 
     # Track structural routing classification decisions metrics inside Prometheus
     GATEWAY_ROUTING_DECISIONS.labels(model_tier=f"Tier_{tier}", assigned_key=model_key).inc()
